@@ -8,128 +8,153 @@ def fetch_data(symbol, start_date):
     print(f"[*] Veri indiriliyor: {symbol}...")
     if not symbol.endswith(".IS"):
         symbol = f"{symbol}.IS"
-    
     df = yf.download(symbol, start=start_date, progress=False)
     if isinstance(df.columns, pd.MultiIndex):
         df.columns = df.columns.get_level_values(0)
     df.dropna(inplace=True)
     return df
 
-def add_supertrend_strategy(df):
+def add_advanced_indicators(df):
     """
-    Ralli Avcısı Stratejisi: SuperTrend
-    Trend sürdükçe pozisyonu asla kapatmaz.
+    AL: HMA 20 + Hacim MA 20 (%20+) + SuperTrend + RSI
+    SAT: Bollinger Üst Bant Dönüşü + SMI Sat + HMA 20 Altı Kapanış
     """
-    # SuperTrend (Period: 10, Multiplier: 3 - Standart Ayar)
-    # Bu fonksiyon 4 sütun döndürür: [SuperTrend Değeri, Trend Yönü (1/-1), Long, Short]
-    st = ta.supertrend(df['High'], df['Low'], df['Close'], length=10, multiplier=3)
+    # 1. Hull Moving Average (HMA 20)
+    df['HMA_20'] = ta.hma(df['Close'], length=20)
     
-    # Sütun isimleri dinamik olduğu için (SUPERT_10_3.0 vb.) sırayla alıyoruz (KeyError Kaçış)
-    df['SUPERTREND_LINE'] = st.iloc[:, 0] # Çizgi değeri
-    df['SUPERTREND_DIR'] = st.iloc[:, 1]  # Yön (1: Yükseliş/Yeşil, -1: Düşüş/Kırmızı)
+    # 2. Hacim Filtresi (Volume MA 20)
+    df['VOL_MA_20'] = ta.sma(df['Volume'], length=20)
+    
+    # 3. SuperTrend (10, 3)
+    st = ta.supertrend(df['High'], df['Low'], df['Close'], length=10, multiplier=3)
+    df['ST_VAL'] = st.iloc[:, 0]
+    df['ST_DIR'] = st.iloc[:, 1] # 1: Buy, -1: Sell
+    
+    # 4. RSI (14)
+    df['RSI'] = ta.rsi(df['Close'], length=14)
+    
+    # 5. Bollinger Bantları (20, 2)
+    bb = ta.bbands(df['Close'], length=20, std=2)
+    df['BB_UPPER'] = bb.iloc[:, 2] # Üst Bant
+    
+    # 6. SMI (Stochastic Momentum Index) - 13, 25, 2
+    smi = ta.smi(df['Close'], fast=13, slow=25, signal=2)
+    df['SMI'] = smi.iloc[:, 0]
+    df['SMI_SIGNAL'] = smi.iloc[:, 1]
     
     return df
 
-def backtest_supertrend(df, initial_capital=10000):
+def backtest_advanced(df, initial_capital=10000):
     capital = initial_capital
     position = 0 
-    entry_price = 0
     trades = []
-    
-    print(f"\n[*] SUPERTREND Stratejisi Başlıyor... Kasa: {initial_capital} TL")
-    print("-" * 100)
-    print(f"{'TARİH':<12} | {'İŞLEM':<10} | {'FİYAT':<10} | {'DURUM':<30} | {'BAKİYE'}")
-    print("-" * 100)
-    
-    # SuperTrend oluşması için ilk 10 günü atla
-    for i in range(10, len(df)):
+    entry_price = 0
+
+    print(f"\n[*] SNIPER v5.0 (Hacim & SMI Odaklı) Başlıyor... Kasa: {initial_capital} TL")
+    print("-" * 130)
+    print(f"{'TARİH':<12} | {'İŞLEM':<10} | {'FİYAT':<10} | {'NEDEN (Detay)':<65} | {'BAKİYE'}")
+    print("-" * 130)
+
+    for i in range(25, len(df)):
         price = df['Close'].iloc[i]
         date = df.index[i]
         
-        # SuperTrend Yönü (1: UP, -1: DOWN)
-        trend_now = df['SUPERTREND_DIR'].iloc[i]
-        trend_prev = df['SUPERTREND_DIR'].iloc[i-1]
-        
-        st_line = df['SUPERTREND_LINE'].iloc[i]
-        
-        # --- ALIM SİNYALİ ---
-        # Trend Kırmızıdan (-1) Yeşile (1) Döndü
-        if trend_prev == -1 and trend_now == 1 and position == 0:
+        # Gösterge Değerleri
+        hma = df['HMA_20'].iloc[i]
+        vol = df['Volume'].iloc[i]
+        vol_ma = df['VOL_MA_20'].iloc[i]
+        st_dir = df['ST_DIR'].iloc[i]
+        rsi = df['RSI'].iloc[i]
+        bb_upper = df['BB_UPPER'].iloc[i]
+        smi = df['SMI'].iloc[i]
+        smi_sig = df['SMI_SIGNAL'].iloc[i]
+        smi_prev = df['SMI'].iloc[i-1]
+        smi_sig_prev = df['SMI_SIGNAL'].iloc[i-1]
+
+        # --- 🟢 ALIM MANTIĞI ---
+        # 1. Fiyat > HMA 20
+        # 2. Hacim > Ortalama Hacim * 1.2 (%20 artış)
+        # 3. SuperTrend = Yeşil (1)
+        # 4. RSI > 45
+        buy_condition = (price > hma) and (vol > vol_ma * 1.2) and (st_dir == 1) and (rsi > 45)
+
+        # --- 🔴 SATIŞ MANTIĞI ---
+        should_sell = False
+        sell_reason = ""
+
+        if position > 0:
+            # 1. Bollinger Üst Banttan Dönüş (Önceki gün değmiş/üstündeymiş, bugün altında)
+            if (df['High'].iloc[i-1] >= df['BB_UPPER'].iloc[i-1]) and (price < df['BB_UPPER'].iloc[i]):
+                should_sell = True
+                sell_reason = "Bollinger Üst Banttan Dönüş (Yorgunluk)"
+            
+            # 2. SMI Sat Sinyali (+40 üstünde aşağı kesişim)
+            elif (smi_prev > 40) and (smi_prev > smi_sig_prev) and (smi < smi_sig):
+                should_sell = True
+                sell_reason = "SMI Sat (+40 Üstü Kesişim)"
+            
+            # 3. Fiyat HMA 20 Altına İndi
+            elif price < hma:
+                should_sell = True
+                sell_reason = "Trend Kırılımı (Fiyat < HMA 20)"
+
+            if should_sell:
+                revenue = position * price
+                profit = revenue - (position * entry_price)
+                capital = revenue
+                trades.append({'Date': date, 'Type': 'SELL', 'Price': price})
+                durum = "✅" if profit > 0 else "🔻"
+                print(f"{date.strftime('%Y-%m-%d'):<12} | 🔴 SAT       | {price:<10.2f} | {sell_reason:<65} | {capital:.2f} TL {durum}")
+                position = 0
+
+        # POZİSYON AÇMA
+        elif position == 0 and buy_condition:
             position = capital / price
             entry_price = price
             capital = 0 
             trades.append({'Date': date, 'Type': 'BUY', 'Price': price})
-            print(f"{date.strftime('%Y-%m-%d'):<12} | 🟢 AL       | {price:<10.2f} | Trend Döndü (Ralli Başlangıcı) | Yatırıldı")
+            print(f"{date.strftime('%Y-%m-%d'):<12} | 🟢 AL       | {price:<10.2f} | Hacim Patlaması + HMA + SuperTrend                      | Yatırıldı")
 
-        # --- SATIŞ SİNYALİ ---
-        # Trend Yeşilden (1) Kırmızıya (-1) Döndü
-        elif trend_prev == 1 and trend_now == -1 and position > 0:
-            revenue = position * price
-            profit = revenue - (position * entry_price)
-            profit_pct = (profit / (position * entry_price)) * 100
-            capital = revenue
-            trades.append({'Date': date, 'Type': 'SELL', 'Price': price})
-            
-            durum = "✅" if profit > 0 else "🔻"
-            print(f"{date.strftime('%Y-%m-%d'):<12} | 🔴 SAT       | {price:<10.2f} | Trend Bitti (%{profit_pct:.1f})       | {capital:.2f} TL {durum}")
-            
-            position = 0
-
-    if position > 0:
-        capital = position * df['Close'].iloc[-1]
-    
     return capital, trades
 
-def plot_supertrend(df, trades):
-    fig = go.Figure()
+def plot_advanced(df, trades):
+    fig = make_subplots(rows=4, cols=1, shared_xaxes=True, 
+                        vertical_spacing=0.02, row_heights=[0.5, 0.15, 0.15, 0.2],
+                        subplot_titles=('Fiyat, BB & HMA', 'Hacim vs Ortalama', 'SMI Momentum', 'RSI'))
 
-    # 1. Mum Grafiği
-    fig.add_trace(go.Candlestick(x=df.index,
-                open=df['Open'], high=df['High'],
-                low=df['Low'], close=df['Close'], name='Fiyat'))
-
-    # 2. SuperTrend Çizgisi (Tek renk yerine trende göre renkli çizelim)
-    # Yükseliş (Yeşil) kısımları
-    up_trend = df[df['SUPERTREND_DIR'] == 1]
-    fig.add_trace(go.Scatter(x=up_trend.index, y=up_trend['SUPERTREND_LINE'],
-                             mode='markers', marker=dict(color='green', size=2), name='Alım Bölgesi (Destek)'))
+    # PANEL 1: FİYAT + BB + HMA
+    fig.add_trace(go.Candlestick(x=df.index, open=df['Open'], high=df['High'], low=df['Low'], close=df['Close'], name='Fiyat'), row=1, col=1)
+    fig.add_trace(go.Scatter(x=df.index, y=df['BB_UPPER'], line=dict(color='gray', dash='dash'), name='Bollinger Üst'), row=1, col=1)
+    fig.add_trace(go.Scatter(x=df.index, y=df['HMA_20'], line=dict(color='blue', width=2), name='HMA 20'), row=1, col=1)
     
-    # Düşüş (Kırmızı) kısımları
-    down_trend = df[df['SUPERTREND_DIR'] == -1]
-    fig.add_trace(go.Scatter(x=down_trend.index, y=down_trend['SUPERTREND_LINE'],
-                             mode='markers', marker=dict(color='red', size=2), name='Satım Bölgesi (Direnç)'))
-
-    # 3. Al-Sat İşaretleri
+    # Sinyaller
     buy_dates = [t['Date'] for t in trades if t['Type'] == 'BUY']
     buy_prices = [t['Price'] for t in trades if t['Type'] == 'BUY']
     sell_dates = [t['Date'] for t in trades if t['Type'] == 'SELL']
     sell_prices = [t['Price'] for t in trades if t['Type'] == 'SELL']
+    fig.add_trace(go.Scatter(x=buy_dates, y=buy_prices, mode='markers', marker=dict(symbol='triangle-up', color='green', size=15), name='AL'), row=1, col=1)
+    fig.add_trace(go.Scatter(x=sell_dates, y=sell_prices, mode='markers', marker=dict(symbol='triangle-down', color='red', size=15), name='SAT'), row=1, col=1)
 
-    fig.add_trace(go.Scatter(x=buy_dates, y=buy_prices, mode='markers', marker=dict(symbol='triangle-up', color='blue', size=15), name='AL'))
-    fig.add_trace(go.Scatter(x=sell_dates, y=sell_prices, mode='markers', marker=dict(symbol='triangle-down', color='orange', size=15), name='SAT'))
+    # PANEL 2: HACİM
+    colors = ['green' if v > df['VOL_MA_20'].iloc[i]*1.2 else 'gray' for i, v in enumerate(df['Volume'])]
+    fig.add_trace(go.Bar(x=df.index, y=df['Volume'], marker_color=colors, name='Hacim'), row=2, col=1)
+    fig.add_trace(go.Scatter(x=df.index, y=df['VOL_MA_20'] * 1.2, line=dict(color='red'), name='Hacim Eşiği (%120)'), row=2, col=1)
 
-    fig.update_layout(
-        title="AKFYE - SuperTrend Stratejisi (Trend Takipçisi)",
-        yaxis_title="Fiyat (TL)",
-        height=700,
-        dragmode='zoom',
-        hovermode='x unified'
-    )
+    # PANEL 3: SMI
+    fig.add_trace(go.Scatter(x=df.index, y=df['SMI'], line=dict(color='blue'), name='SMI'), row=3, col=1)
+    fig.add_trace(go.Scatter(x=df.index, y=df['SMI_SIGNAL'], line=dict(color='red'), name='Signal'), row=3, col=1)
+    fig.add_hline(y=40, line_dash="dot", line_color="orange", row=3, col=1)
+
+    # PANEL 4: RSI
+    fig.add_trace(go.Scatter(x=df.index, y=df['RSI'], line=dict(color='purple'), name='RSI'), row=4, col=1)
+    fig.add_hline(y=45, line_dash="dot", line_color="black", row=4, col=1)
+
+    fig.update_layout(title="AKFYE Sniper v5.0 - Hacim & Oynaklık Stratejisi", height=1000, xaxis_rangeslider_visible=False)
     fig.show()
 
 if __name__ == "__main__":
-    # Tarihi biraz daha geriye çektim ki o büyük rallinin başını görelim
     data = fetch_data("AKFYE", "2023-01-01") 
-    
-    data = add_supertrend_strategy(data)
-    # İlk 10 gün hesaplama yok, temizleyelim
-    data.dropna(inplace=True)
-    
-    son_bakiye, islem_gecmisi = backtest_supertrend(data, 10000)
-    
-    getiri = ((son_bakiye - 10000) / 10000) * 100
-    print("-" * 100)
-    print(f"SONUÇ: 10.000 TL -> {son_bakiye:.2f} TL (Getiri: %{getiri:.2f})")
-    print("-" * 100)
-    
-    plot_supertrend(data, islem_gecmisi)
+    data = add_advanced_indicators(data)
+    son_bakiye, islem_gecmisi = backtest_advanced(data, 10000)
+    print(f"\nSONUÇ: 10.000 TL -> {son_bakiye:.2f} TL (Getiri: %{((son_bakiye-10000)/10000)*100:.2f})")
+    plot_advanced(data, islem_gecmisi)
