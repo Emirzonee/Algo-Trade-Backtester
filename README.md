@@ -19,12 +19,12 @@ Kütüphane bağımlılıklarını yüklemek için:
 
 ```bash
 pip install -r requirements.txt
+```
 Simülasyonu başlatmak için:
-
 ```bash
 python main.py
 ```
-Sonuç
+## Sonuç
 Strateji, AKFYE 2023-2026 verilerinde 10.000 TL başlangıç sermayesini, disiplinli tahliye yöntemleri sayesinde 21.602,20 TL seviyesine ulaştırmıştır.
 
 ## Performans Analizi ve Son Not
