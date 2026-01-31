@@ -1,4 +1,17 @@
+# Python geçici dosyaları
 __pycache__/
-*.pyc
+*.py[cod]
+*$py.class
+
+# Veri setleri (Büyük csv dosyaları vb.)
+*.csv
+*.xlsx
+
+# Sanal ortam
+venv/
+env/
+.env
+
+# İşletim sistemi dosyaları
 .DS_Store
-.vscode/
+Thumbs.db
