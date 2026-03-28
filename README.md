@@ -1,8 +1,8 @@
-# Algo-Trade-Backtester (SNIPER v8.39)
+# Algo-Trade-Backtester 
 
 ## Project Overview
 
-A backtesting engine for the SNIPER v8.39 trading strategy, developed and tuned on BIST:AKFYE. The strategy uses a hierarchical entry confirmation system combining EMA trend direction, volume flow, Bollinger Band positioning, and SuperTrend — and replaces a standard stop-loss with four distinct candle-based exhaustion exit signals. Tested on 2023–2026 AKFYE data, the strategy returned +116% against the underlying asset's +60% gain over the same period.
+A backtesting engine for trading strategy, developed and tuned on BIST:AKFYE. The strategy uses a hierarchical entry confirmation system combining EMA trend direction, volume flow, Bollinger Band positioning, and SuperTrend — and replaces a standard stop-loss with four distinct candle-based exhaustion exit signals. Tested on 2023–2026 AKFYE data, the strategy returned +116% against the underlying asset's +60% gain over the same period.
 
 ---
 
